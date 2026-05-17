@@ -49,13 +49,17 @@ app = Flask(__name__)
 ts = lambda: datetime.datetime.now().strftime("%H:%M:%S")
 
 
-def frame_to_b64jpg(frame, max_w=1280):
-    """Encode a BGR frame to base64 JPEG, resized to max_w."""
+def frame_to_b64jpg(frame, max_w=960, quality=65):
+    """Encode a BGR frame to base64 JPEG, resized to max_w.
+
+    Smaller payloads + lower quality reduce decode time in the browser,
+    which is the main source of jank on the Jetson.
+    """
     h, w = frame.shape[:2]
     if w > max_w:
         scale = max_w / w
         frame = cv2.resize(frame, (max_w, int(h * scale)))
-    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
     return base64.b64encode(buf).decode()
 
 
@@ -915,6 +919,25 @@ def serve_data(filename):
     return send_from_directory("data", filename)
 
 
+def preload_models():
+    """Warm up heavy models at startup so the first inference click is fast."""
+    print("Préchargement des modèles...")
+    t0 = time.time()
+    for name, loader in [
+        ("fire", load_fire_models),
+        ("objects", load_obj_model),
+        ("fall", load_fall_model),
+    ]:
+        t1 = time.time()
+        try:
+            loader()
+            print(f"  ✓ {name} prêt ({time.time()-t1:.1f}s)")
+        except Exception as e:
+            print(f"  ⚠ {name} non chargé : {e}")
+    print(f"Préchargement terminé en {time.time()-t0:.1f}s")
+
+
 if __name__ == "__main__":
     load_authorized_faces()  # disabled: no webcam available
-    app.run(host="0.0.0.0", port=7860, debug=False, threaded=True)
+    preload_models()
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
