@@ -922,6 +922,7 @@ def preload_models():
     for name, loader in [
         ("fire", load_fire_models),
         ("objects", load_obj_model),
+        ("fall", load_fall_model),
     ]:
         t1 = time.time()
         try:
