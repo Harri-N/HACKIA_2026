@@ -490,6 +490,8 @@ def gen_fire_sse(video_path, sid=None):
                 yield sse_event({"type": "frame", "data": frame_to_b64jpg(annotated)})
                 if xai_overlay is not None:
                     yield sse_event({"type": "frame_xai", "data": frame_to_b64jpg(xai_overlay)})
+                else:
+                    yield sse_event({"type": "xai_clear"})
 
             idx += 1
 
@@ -712,6 +714,8 @@ def gen_fall_sse(video_path, sid=None):
                 raw_fall_prob = float(probs[fall_class_idx].item())
                 smoothed_fall_prob = (FALL_EMA_ALPHA * raw_fall_prob
                                       + (1 - FALL_EMA_ALPHA) * smoothed_fall_prob)
+                if pred_idx == fall_class_idx:
+                    yield sse_event({"type": "log", "text": f"[{ts()}] Image {idx} ({idx/fps:.1f}s) : Chute détectée — {cur_label} ({cur_conf:.0%})"})
 
             is_falling = smoothed_fall_prob > FALL_THRESHOLD
             if is_falling:
@@ -858,21 +862,21 @@ def _resolve_stream_source(args, default_path):
 
 @app.route("/stream/fire")
 def stream_fire():
-    src = _resolve_stream_source(request.args, "data/foret.mp4")
+    src = _resolve_stream_source(request.args, "data/test/fire.mp4")
     sid = request.args.get("sid")
     return Response(gen_fire_sse(src, sid=sid), mimetype="text/event-stream")
 
 
 @app.route("/stream/objects")
 def stream_objects():
-    src = _resolve_stream_source(request.args, "data/object_detection.mp4")
+    src = _resolve_stream_source(request.args, "data/test/Objects.MOV")
     sid = request.args.get("sid")
     return Response(gen_objects_sse(src, sid=sid), mimetype="text/event-stream")
 
 
 @app.route("/stream/fall")
 def stream_fall():
-    src = _resolve_stream_source(request.args, "data/falling0.mp4")
+    src = _resolve_stream_source(request.args, "data/test/falling0.mp4")
     sid = request.args.get("sid")
     return Response(gen_fall_sse(src, sid=sid), mimetype="text/event-stream")
 

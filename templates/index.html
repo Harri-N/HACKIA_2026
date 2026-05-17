@@ -382,7 +382,7 @@
                 <label><input type="radio" name="fire-source" value="webcam" onchange="onSourceChange('fire')"><span>Webcam</span></label>
               </div>
               <input type="file" id="fire-file" accept="video/*" style="display:none;margin-top:10px;">
-              <div id="fire-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : foret.mp4</div>
+              <div id="fire-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : fire.mp4</div>
             </div>
             <button class="btn btn-fire" id="fire-btn" onclick="runFireStream()" style="width:100%">Détecter le feu</button>
             <div class="ctrl-row">
@@ -466,7 +466,7 @@
                 <label><input type="radio" name="objects-source" value="webcam" onchange="onSourceChange('objects')"><span>Webcam</span></label>
               </div>
               <input type="file" id="obj-file" accept="video/*" style="display:none;margin-top:10px;">
-              <div id="objects-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : object_detection.mp4</div>
+              <div id="objects-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : Objects.MOV</div>
             </div>
             <button class="btn btn-obj" id="obj-btn" onclick="runObjectsStream()" style="width:100%">Rechercher les objets</button>
             <div class="ctrl-row">
@@ -603,14 +603,14 @@ const MODULES = {
   fire: {
     runBtn: 'fire-btn', pauseBtn: 'fire-pause-btn', stopBtn: 'fire-stop-btn',
     file: 'fire-file', sourceName: 'fire-source', hint: 'fire-source-hint',
-    defaultHint: 'Vidéo par défaut : foret.mp4',
+    defaultHint: 'Vidéo par défaut : fire.mp4',
     media: 'fire-media', mediaXai: 'fire-media-xai', logs: 'fire-logs',
     buildUrl: (params) => '/stream/fire?' + params,
   },
   objects: {
     runBtn: 'obj-btn', pauseBtn: 'objects-pause-btn', stopBtn: 'objects-stop-btn',
     file: 'obj-file', sourceName: 'objects-source', hint: 'objects-source-hint',
-    defaultHint: 'Vidéo par défaut : object_detection.mp4',
+    defaultHint: 'Vidéo par défaut : Objects.MOV',
     media: 'obj-media', logs: 'obj-logs',
     buildUrl: (params) => '/stream/objects?' + params,
   },
@@ -715,6 +715,8 @@ function startSSE(mod, url, sid, xaiEl) {
       mediaEl.innerHTML = '<img src="data:image/jpeg;base64,' + msg.data + '">';
     } else if (msg.type === 'frame_xai' && xaiEl) {
       xaiEl.innerHTML = '<img src="data:image/jpeg;base64,' + msg.data + '">';
+    } else if (msg.type === 'xai_clear' && xaiEl) {
+      xaiEl.innerHTML = '<div class="media-placeholder">En attente d\'une détection de feu...</div>';
     } else if (msg.type === 'log') {
       logEl.textContent += msg.text + '\n';
       logEl.scrollTop = logEl.scrollHeight;
