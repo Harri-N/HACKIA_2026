@@ -432,7 +432,7 @@
               <input type="file" id="fall-file" accept="video/*" style="display:none;margin-top:10px;">
               <div id="fall-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : falling0.mp4</div>
             </div>
-            <button class="btn btn-fall" id="fall-btn" onclick="runFallStream()" style="width:100%">Détecter une chute</button>
+            <button class="btn btn-fall" id="fall-btn" onclick="runFallStream()" style="width:100%">Fall detection</button>
             <div class="ctrl-row">
               <button class="btn btn-ghost" id="fall-pause-btn" onclick="togglePause('fall')" disabled>Pause</button>
               <button class="btn btn-ghost btn-stop" id="fall-stop-btn" onclick="doStop('fall')" disabled>Stop</button>
@@ -440,7 +440,7 @@
           </div>
           <div class="panel-right">
             <div class="media-box" id="fall-media">
-              <div class="media-placeholder">Cliquez sur « Détecter une chute » pour lancer l'inférence en direct</div>
+              <div class="media-placeholder">Cliquez sur « Fall detection » pour lancer l'inférence en direct</div>
             </div>
             <div class="log-box" id="fall-logs"></div>
           </div>
@@ -682,6 +682,19 @@ async function doStop(mod) {
   }
 }
 
+// Reuse a single <img> per media-box so we don't recreate a DOM node on every
+// frame — that's the main source of jank on the Jetson.
+function _ensureLiveImg(box) {
+  let img = box.querySelector('img.live');
+  if (!img) {
+    box.innerHTML = '';
+    img = document.createElement('img');
+    img.className = 'live';
+    box.appendChild(img);
+  }
+  return img;
+}
+
 // ── SSE stream helper ──
 function startSSE(mod, url, sid, xaiEl) {
   const m = MODULES[mod];
@@ -712,9 +725,9 @@ function startSSE(mod, url, sid, xaiEl) {
   es.onmessage = function(e) {
     const msg = JSON.parse(e.data);
     if (msg.type === 'frame') {
-      mediaEl.innerHTML = '<img src="data:image/jpeg;base64,' + msg.data + '">';
+      _ensureLiveImg(mediaEl).src = 'data:image/jpeg;base64,' + msg.data;
     } else if (msg.type === 'frame_xai' && xaiEl) {
-      xaiEl.innerHTML = '<img src="data:image/jpeg;base64,' + msg.data + '">';
+      _ensureLiveImg(xaiEl).src = 'data:image/jpeg;base64,' + msg.data;
     } else if (msg.type === 'log') {
       logEl.textContent += msg.text + '\n';
       logEl.scrollTop = logEl.scrollHeight;
