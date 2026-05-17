@@ -384,15 +384,6 @@
               <input type="file" id="fire-file" accept="video/*" style="display:none;margin-top:10px;">
               <div id="fire-source-hint" style="color:var(--text-muted);font-size:.78em;margin-top:6px;">Vidéo par défaut : foret.mp4</div>
             </div>
-            <div class="card">
-              <span class="card-label">Modèle classifier</span>
-              <select id="fire-classifier">
-                <option value="efficientnet_v2_s">EfficientNet V2-S</option>
-                <option value="efficientnet_v2_m">EfficientNet V2-M</option>
-                <option value="swin_b">Swin-B</option>
-                <option value="resnet50">ResNet-50</option>
-              </select>
-            </div>
             <button class="btn btn-fire" id="fire-btn" onclick="runFireStream()" style="width:100%">Détecter le feu</button>
             <div class="ctrl-row">
               <button class="btn btn-ghost" id="fire-pause-btn" onclick="togglePause('fire')" disabled>Pause</button>
@@ -467,16 +458,6 @@
         </div>
         <div class="panel-body">
           <div class="panel-left">
-            <div class="card">
-              <span class="card-label">Objets à détecter</span>
-              <div class="checkbox-group">
-                <label><input type="checkbox" name="obj" value="keys" checked><span>Clés</span></label>
-                <label><input type="checkbox" name="obj" value="wallet" checked><span>Portefeuille</span></label>
-                <label><input type="checkbox" name="obj" value="watch" checked><span>Montre</span></label>
-                <label><input type="checkbox" name="obj" value="remote" checked><span>Télécommande</span></label>
-                <label><input type="checkbox" name="obj" value="smartphone" checked><span>Téléphone</span></label>
-              </div>
-            </div>
             <div class="card">
               <span class="card-label">Source vidéo</span>
               <div class="checkbox-group">
@@ -624,22 +605,14 @@ const MODULES = {
     file: 'fire-file', sourceName: 'fire-source', hint: 'fire-source-hint',
     defaultHint: 'Vidéo par défaut : foret.mp4',
     media: 'fire-media', mediaXai: 'fire-media-xai', logs: 'fire-logs',
-    buildUrl: (params) => {
-      params.set('classifier', document.getElementById('fire-classifier').value);
-      return '/stream/fire?' + params;
-    },
+    buildUrl: (params) => '/stream/fire?' + params,
   },
   objects: {
     runBtn: 'obj-btn', pauseBtn: 'objects-pause-btn', stopBtn: 'objects-stop-btn',
     file: 'obj-file', sourceName: 'objects-source', hint: 'objects-source-hint',
     defaultHint: 'Vidéo par défaut : object_detection.mp4',
     media: 'obj-media', logs: 'obj-logs',
-    buildUrl: (params) => {
-      const selected = [];
-      document.querySelectorAll('input[name="obj"]:checked').forEach(cb => selected.push(cb.value));
-      params.set('selected', selected.join(','));
-      return '/stream/objects?' + params;
-    },
+    buildUrl: (params) => '/stream/objects?' + params,
   },
   fall: {
     runBtn: 'fall-btn', pauseBtn: 'fall-pause-btn', stopBtn: 'fall-stop-btn',

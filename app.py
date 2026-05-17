@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms.v2 as transforms
+import yaml
 from PIL import Image
 import face_recognition
 from flask import Flask, render_template, Response, jsonify, request, send_from_directory
@@ -18,25 +19,30 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUTS_DIR = "./outputs"
 AUTHORIZED_FACES_DIR = "./authorized_faces"
 MODELS_DIR = "./models"
+CONFIG_PATH = "./config.yaml"
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 os.makedirs(AUTHORIZED_FACES_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
 
+with open(CONFIG_PATH, "r", encoding="utf-8") as _f:
+    CONFIG = yaml.safe_load(_f)
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# MODEL PATHS
+# MODEL PATHS — driven by config.yaml
 # ═══════════════════════════════════════════════════════════════════════════════
 MODELS = {
-    "fire_localizer":   os.path.join(MODELS_DIR, "phase1_firezone.pt"),
-    "object_detector":  os.path.join(MODELS_DIR, "yolov8s.pt"),
+    "fire_localizer":   os.path.join(MODELS_DIR, CONFIG["firezone"]["weights"]),
+    "object_detector":  os.path.join(MODELS_DIR, CONFIG["object_detection"]["weights"]),
 }
 
 # Fire classifiers — trained on FIRE_DATABASE_4 with the same 3-class layout.
-FIRE_CLASSES = ["no_fire", "start_fire", "fire"]
-FIRE_IMGSZ = 224
-IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD  = [0.229, 0.224, 0.225]
+FIRE_CLASSES   = CONFIG["fire"]["classes"]
+FIRE_IMGSZ     = CONFIG["fire"]["image_size"]
+IMAGENET_MEAN  = CONFIG["fire"]["normalization"]["mean"]
+IMAGENET_STD   = CONFIG["fire"]["normalization"]["std"]
 # YOLO firezone names — explicit so we never display raw class indices.
-FIREZONE_NAMES = {0: "smoke", 1: "fire"}
+FIREZONE_NAMES = {int(k): v for k, v in CONFIG["firezone"]["class_names"].items()}
+FIREZONE_CONF  = float(CONFIG["firezone"]["confidence"])
 
 app = Flask(__name__)
 
@@ -252,40 +258,43 @@ def _build_effnet_v2_m(num_classes: int) -> nn.Module:
     return model
 
 
-# Each entry describes one selectable classifier: weights filename, builder,
-# Grad-CAM target layer, and whether activations are channels-last (Swin) or
-# channels-first (CNNs).
+# Each entry describes one classifier: builder, Grad-CAM target layer, and
+# whether activations are channels-last (Swin) or channels-first (CNNs). The
+# weights filename and the active choice come from config.yaml.
+_FIRE_WEIGHTS = CONFIG["fire"]["weights"]
 FIRE_CLASSIFIERS = {
     "swin_b": {
-        "filename":      "phase1_fire_swin_b.pt",
+        "filename":      _FIRE_WEIGHTS["swin_b"],
         "builder":       _build_swin_b,
         "target":        lambda m: m.norm,
         "channels_last": True,
         "label":         "Swin-B",
     },
     "resnet50": {
-        "filename":      "phase1_fire_resnet50.pt",
+        "filename":      _FIRE_WEIGHTS["resnet50"],
         "builder":       _build_resnet50,
         "target":        lambda m: m.layer4,
         "channels_last": False,
         "label":         "ResNet-50",
     },
     "efficientnet_v2_s": {
-        "filename":      "phase1_fire_effnet_v2_s.pt",
+        "filename":      _FIRE_WEIGHTS["efficientnet_v2_s"],
         "builder":       _build_effnet_v2_s,
         "target":        lambda m: m.features[-1],
         "channels_last": False,
         "label":         "EfficientNet V2-S",
     },
     "efficientnet_v2_m": {
-        "filename":      "phase1_fire_effnet_v2_m.pt",
+        "filename":      _FIRE_WEIGHTS["efficientnet_v2_m"],
         "builder":       _build_effnet_v2_m,
         "target":        lambda m: m.features[-1],
         "channels_last": False,
         "label":         "EfficientNet V2-M",
     },
 }
-DEFAULT_FIRE_CLASSIFIER = "efficientnet_v2_s"
+ACTIVE_FIRE_CLASSIFIER = CONFIG["fire"]["classifier"]
+if ACTIVE_FIRE_CLASSIFIER not in FIRE_CLASSIFIERS:
+    raise ValueError(f"config.yaml: fire.classifier='{ACTIVE_FIRE_CLASSIFIER}' is not one of {list(FIRE_CLASSIFIERS)}")
 
 
 def _register_gradcam_hooks(model, target_layer, channels_last):
@@ -355,12 +364,12 @@ def _check_model_file(path, name):
         )
 
 
-def load_fire_models(classifier_name=DEFAULT_FIRE_CLASSIFIER):
-    """Load the requested fire classifier (plain state_dict .pt file) and the
+def load_fire_models(classifier_name=None):
+    """Load the configured fire classifier (plain state_dict .pt file) and the
     firezone YOLO model. Each classifier is cached on first use."""
     global _yolo_fire
-    if classifier_name not in FIRE_CLASSIFIERS:
-        classifier_name = DEFAULT_FIRE_CLASSIFIER
+    if classifier_name is None or classifier_name not in FIRE_CLASSIFIERS:
+        classifier_name = ACTIVE_FIRE_CLASSIFIER
     spec = FIRE_CLASSIFIERS[classifier_name]
 
     if classifier_name not in _cls_models:
@@ -401,14 +410,14 @@ def _draw_firezone_boxes(frame, results):
     return annotated, detections
 
 
-def gen_fire_sse(video_path, sid=None, classifier=DEFAULT_FIRE_CLASSIFIER):
+def gen_fire_sse(video_path, sid=None):
     if sid:
         _ensure_stream(sid, "fire")
     cap = None
     try:
-        spec = FIRE_CLASSIFIERS.get(classifier, FIRE_CLASSIFIERS[DEFAULT_FIRE_CLASSIFIER])
+        spec = FIRE_CLASSIFIERS[ACTIVE_FIRE_CLASSIFIER]
         yield sse_event({"type": "log", "text": f"[{ts()}] Chargement des modèles de feu (classifier : {spec['label']})..."})
-        cls_model, yolo_model = load_fire_models(classifier)
+        cls_model, yolo_model = load_fire_models(ACTIVE_FIRE_CLASSIFIER)
 
         source = _resolve_source(video_path)
         is_webcam = isinstance(source, int)
@@ -457,7 +466,7 @@ def gen_fire_sse(video_path, sid=None, classifier=DEFAULT_FIRE_CLASSIFIER):
             # 2) Only when something is detected: run firezone YOLO + Grad-CAM.
             xai_overlay = None
             if cls_label != "no_fire" and cls_label != "nofire":
-                results = yolo_model(frame, conf=0.3, verbose=False)
+                results = yolo_model(frame, conf=FIREZONE_CONF, verbose=False)
                 annotated, dets = _draw_firezone_boxes(frame, results)
                 for name, conf in dets:
                     yield sse_event({"type": "log", "text": f"[{ts()}] Image {idx} ({idx/fps:.1f}s) : FireZone {name} ({conf:.0%})"})
@@ -501,8 +510,8 @@ def gen_fire_sse(video_path, sid=None, classifier=DEFAULT_FIRE_CLASSIFIER):
 # ═══════════════════════════════════════════════════════════════════════════════
 # OBJECT DETECTION
 # ═══════════════════════════════════════════════════════════════════════════════
-COCO_MAP = {"keys": None, "wallet": None, "watch": "clock", "remote": "remote", "smartphone": "cell phone"}
-FR_NAMES = {"keys": "clés", "wallet": "portefeuille", "watch": "montre", "remote": "télécommande", "smartphone": "téléphone"}
+FR_NAMES = dict(CONFIG["object_detection"]["french_names"])
+OBJ_CONF = float(CONFIG["object_detection"]["confidence"])
 _yolo_obj = None
 
 
@@ -516,13 +525,10 @@ def load_obj_model():
 
 
 def _friendly_name(cls_name):
-    for k, v in COCO_MAP.items():
-        if v == cls_name:
-            return FR_NAMES.get(k, k)
-    return cls_name
+    return FR_NAMES.get(cls_name, cls_name)
 
 
-def gen_objects_sse(video_path, selected, sid=None):
+def gen_objects_sse(video_path, sid=None):
     if sid:
         _ensure_stream(sid, "objects")
     cap = None
@@ -530,13 +536,8 @@ def gen_objects_sse(video_path, selected, sid=None):
         yield sse_event({"type": "log", "text": f"[{ts()}] Chargement du modèle de détection d'objets..."})
         model = load_obj_model()
 
-        target_coco = {COCO_MAP[o] for o in selected if COCO_MAP.get(o)}
-        has_unmapped = [o for o in selected if not COCO_MAP.get(o)]
-        selected_fr = [FR_NAMES.get(o, o) for o in selected]
-        yield sse_event({"type": "log", "text": f"[{ts()}] Recherche de : {', '.join(selected_fr)}"})
-        if has_unmapped:
-            unmapped_fr = [FR_NAMES.get(o, o) for o in has_unmapped]
-            yield sse_event({"type": "log", "text": f"[{ts()}] {', '.join(unmapped_fr)} non présents dans COCO — affichage de toutes les détections"})
+        class_list = [_friendly_name(n) for n in model.names.values()]
+        yield sse_event({"type": "log", "text": f"[{ts()}] Classes détectées : {', '.join(class_list)}"})
 
         source = _resolve_source(video_path)
         is_webcam = isinstance(source, int)
@@ -570,19 +571,18 @@ def gen_objects_sse(video_path, selected, sid=None):
             if not ret:
                 break
 
-            results = model(frame, conf=0.25, verbose=False)
+            results = model(frame, conf=OBJ_CONF, verbose=False)
             annotated = frame.copy()
 
             for box in results[0].boxes:
                 cls_name = model.names[int(box.cls[0])]
                 conf = float(box.conf[0])
-                if cls_name in target_coco or (has_unmapped and conf > 0.3):
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    friendly = _friendly_name(cls_name)
-                    yield sse_event({"type": "log", "text": f"[{ts()}] Image {idx} ({idx/fps:.1f}s) : {friendly} ({conf:.0%})"})
-                    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(annotated, f"{friendly} {conf:.0%}", (x1, y1 - 8),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                friendly = _friendly_name(cls_name)
+                yield sse_event({"type": "log", "text": f"[{ts()}] Image {idx} ({idx/fps:.1f}s) : {friendly} ({conf:.0%})"})
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(annotated, f"{friendly} {conf:.0%}", (x1, y1 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if idx % 2 == 0:
                 if not is_webcam:
@@ -860,16 +860,14 @@ def _resolve_stream_source(args, default_path):
 def stream_fire():
     src = _resolve_stream_source(request.args, "data/foret.mp4")
     sid = request.args.get("sid")
-    classifier = request.args.get("classifier", DEFAULT_FIRE_CLASSIFIER)
-    return Response(gen_fire_sse(src, sid=sid, classifier=classifier), mimetype="text/event-stream")
+    return Response(gen_fire_sse(src, sid=sid), mimetype="text/event-stream")
 
 
 @app.route("/stream/objects")
 def stream_objects():
     src = _resolve_stream_source(request.args, "data/object_detection.mp4")
     sid = request.args.get("sid")
-    selected = request.args.get("selected", "keys,wallet,watch,remote,smartphone").split(",")
-    return Response(gen_objects_sse(src, selected, sid=sid), mimetype="text/event-stream")
+    return Response(gen_objects_sse(src, sid=sid), mimetype="text/event-stream")
 
 
 @app.route("/stream/fall")
