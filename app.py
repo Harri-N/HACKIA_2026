@@ -250,6 +250,12 @@ def _build_resnet50(num_classes: int) -> nn.Module:
     return model
 
 
+def _build_effnet_b0(num_classes: int) -> nn.Module:
+    model = torchvision.models.efficientnet_b0(weights=None)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    return model
+
+
 def _build_effnet_v2_s(num_classes: int) -> nn.Module:
     model = torchvision.models.efficientnet_v2_s(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
@@ -280,6 +286,13 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.layer4,
         "channels_last": False,
         "label":         "ResNet-50",
+    },
+    "efficientnet_b0": {
+        "filename":      _FIRE_WEIGHTS["efficientnet_b0"],
+        "builder":       _build_effnet_b0,
+        "target":        lambda m: m.features[-1],
+        "channels_last": False,
+        "label":         "EfficientNet-B0",
     },
     "efficientnet_v2_s": {
         "filename":      _FIRE_WEIGHTS["efficientnet_v2_s"],

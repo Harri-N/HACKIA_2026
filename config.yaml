@@ -4,10 +4,11 @@
 # ─── Phase 1 : classification du feu ───
 fire:
   # Classifier actif. Valeurs possibles :
-  #   efficientnet_v2_s, efficientnet_v2_m, swin_b, resnet50
-  classifier: efficientnet_v2_s
+  #   efficientnet_b0, efficientnet_v2_s, efficientnet_v2_m, swin_b, resnet50
+  classifier: efficientnet_b0
   # Fichier de poids (.pt) pour chaque architecture, relatif à ./models/.
   weights:
+    efficientnet_b0:   efficientnet_b0_v2_Pauline.pt
     efficientnet_v2_s: phase1_fire_effnet_v2_s.pt
     efficientnet_v2_m: phase1_fire_effnet_v2_m.pt
     swin_b:            phase1_fire_swin_b.pt
