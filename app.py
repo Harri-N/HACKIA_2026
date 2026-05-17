@@ -227,15 +227,29 @@ def gen_login_frames():
 # not no_fire → run firezone YOLO for bounding boxes AND Grad-CAM on the
 # classifier for explainability.
 # ═══════════════════════════════════════════════════════════════════════════════
-_cls_models = {}  # classifier_name -> loaded nn.Module (cached, gradcam-hooked)
+_cls_models = {}      # classifier_name -> loaded nn.Module (cached, gradcam-hooked)
+_cls_transforms = {}  # classifier_name -> torchvision Compose matching its training
 _yolo_fire = None
 
-_fire_transform = transforms.Compose([
-    transforms.Resize(int(FIRE_IMGSZ * 1.15)),
-    transforms.CenterCrop(FIRE_IMGSZ),
-    transforms.ToTensor(),
-    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-])
+# Two preprocessing flavours: the "ImageNet style" Resize+CenterCrop preserves
+# aspect ratio (correct for backbones whose fine-tuning followed the same
+# pipeline), while the "square resize" matches notebooks that just resize to
+# (H, W) without cropping (e.g. Pauline's EfficientNet-B0 training).
+def _make_resize_crop_transform():
+    return transforms.Compose([
+        transforms.Resize(int(FIRE_IMGSZ * 1.15)),
+        transforms.CenterCrop(FIRE_IMGSZ),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
+
+
+def _make_square_resize_transform():
+    return transforms.Compose([
+        transforms.Resize((FIRE_IMGSZ, FIRE_IMGSZ)),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
 
 
 def _build_swin_b(num_classes: int) -> nn.Module:
@@ -279,6 +293,7 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.norm,
         "channels_last": True,
         "label":         "Swin-B",
+        "transform":     _make_resize_crop_transform,
     },
     "resnet50": {
         "filename":      _FIRE_WEIGHTS["resnet50"],
@@ -286,6 +301,7 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.layer4,
         "channels_last": False,
         "label":         "ResNet-50",
+        "transform":     _make_resize_crop_transform,
     },
     "efficientnet_b0": {
         "filename":      _FIRE_WEIGHTS["efficientnet_b0"],
@@ -293,6 +309,8 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.features[-1],
         "channels_last": False,
         "label":         "EfficientNet-B0",
+        # Pauline's training did Resize((224, 224)) directly (no center crop).
+        "transform":     _make_square_resize_transform,
     },
     "efficientnet_v2_s": {
         "filename":      _FIRE_WEIGHTS["efficientnet_v2_s"],
@@ -300,6 +318,7 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.features[-1],
         "channels_last": False,
         "label":         "EfficientNet V2-S",
+        "transform":     _make_resize_crop_transform,
     },
     "efficientnet_v2_m": {
         "filename":      _FIRE_WEIGHTS["efficientnet_v2_m"],
@@ -307,6 +326,7 @@ FIRE_CLASSIFIERS = {
         "target":        lambda m: m.features[-1],
         "channels_last": False,
         "label":         "EfficientNet V2-M",
+        "transform":     _make_resize_crop_transform,
     },
 }
 ACTIVE_FIRE_CLASSIFIER = CONFIG["fire"]["classifier"]
@@ -383,7 +403,8 @@ def _check_model_file(path, name):
 
 def load_fire_models(classifier_name=None):
     """Load the configured fire classifier (plain state_dict .pt file) and the
-    firezone YOLO model. Each classifier is cached on first use."""
+    firezone YOLO model. Each classifier is cached on first use, together with
+    the preprocessing transform that matches its training pipeline."""
     global _yolo_fire
     if classifier_name is None or classifier_name not in FIRE_CLASSIFIERS:
         classifier_name = ACTIVE_FIRE_CLASSIFIER
@@ -398,13 +419,14 @@ def load_fire_models(classifier_name=None):
         m.to(DEVICE).eval()
         _register_gradcam_hooks(m, spec["target"](m), spec["channels_last"])
         _cls_models[classifier_name] = m
+        _cls_transforms[classifier_name] = spec["transform"]()
 
     if _yolo_fire is None:
         _check_model_file(MODELS["fire_localizer"], "fire localizer")
         from ultralytics import YOLO
         _yolo_fire = YOLO(MODELS["fire_localizer"])
 
-    return _cls_models[classifier_name], _yolo_fire
+    return _cls_models[classifier_name], _yolo_fire, _cls_transforms[classifier_name]
 
 
 def _draw_firezone_boxes(frame, results):
@@ -434,7 +456,7 @@ def gen_fire_sse(video_path, sid=None):
     try:
         spec = FIRE_CLASSIFIERS[ACTIVE_FIRE_CLASSIFIER]
         yield sse_event({"type": "log", "text": f"[{ts()}] Chargement des modèles de feu (classifier : {spec['label']})..."})
-        cls_model, yolo_model = load_fire_models(ACTIVE_FIRE_CLASSIFIER)
+        cls_model, yolo_model, fire_transform = load_fire_models(ACTIVE_FIRE_CLASSIFIER)
 
         source = _resolve_source(video_path)
         is_webcam = isinstance(source, int)
@@ -469,9 +491,10 @@ def gen_fire_sse(video_path, sid=None):
             if not ret:
                 break
 
-            # 1) Classification with the Swin-B fire model.
+            # 1) Classification with the active fire model, using the transform
+            # that matches its training pipeline.
             img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            t = _fire_transform(img).unsqueeze(0).to(DEVICE)
+            t = fire_transform(img).unsqueeze(0).to(DEVICE)
             with torch.no_grad():
                 probs = torch.softmax(cls_model(t)[0], dim=0)
             cls_idx = int(probs.argmax().item())
